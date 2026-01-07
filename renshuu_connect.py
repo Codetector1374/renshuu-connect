@@ -7,8 +7,12 @@ from fastapi import FastAPI, Request, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse
+from typing import Any
 
-from models import Action, EmptyRequest, AddNoteRequest, CanAddNotesRequest, CanAddNotesWithErrorDetailRequest
+from models import (
+    Action, EmptyRequest, AddNoteRequest, CanAddNotesRequest,
+    CanAddNotesWithErrorDetailRequest, MultiRequest, BaseRequest
+)
 from renshuu_api import RenshuuApi
 from renshuu_service import RenshuuService
 from database import init_db, get_db
@@ -124,15 +128,12 @@ async def drop_cache(list_id: str, db: Session = Depends(get_db)):
     return result
 
 
-@app.post("/")
-async def root(
-    request: EmptyRequest | AddNoteRequest | CanAddNotesRequest | CanAddNotesWithErrorDetailRequest,
-    db: Session = Depends(get_db)
-):
-    api = RenshuuApi(request.key)
-    service = RenshuuService(api, db)
-
-    logger.debug(f'Request action: {request.action}')
+def handle_action(request: BaseRequest, service: RenshuuService) -> Any:
+    """
+    Handle a single action request and return the result.
+    This function is used both for regular requests and for sub-actions in multi requests.
+    """
+    logger.debug(f'Handling action: {request.action}')
 
     if request.action is Action.deckNames:
         return service.get_schedules()
@@ -143,19 +144,51 @@ async def root(
     elif request.action is Action.canAddNotes:
         # Note: ProcessPoolExecutor can't share database sessions
         # TODO: We can parallelize the API requests, although in the same thread, API is mostly IO bound
-        resp = [service.can_add_note(note) for note in request.params.notes],
-        return resp
+        if hasattr(request, 'params') and hasattr(request.params, 'notes'):
+            resp = [service.can_add_note(note)
+                    for note in request.params.notes]
+            return resp
+        return []
     elif request.action is Action.canAddNotesWithErrorDetail:
-        resp = [service.can_add_notes_with_error_detail(note) for note in request.params.notes]
-        return resp
+        if hasattr(request, 'params') and hasattr(request.params, 'notes'):
+            resp = [service.can_add_notes_with_error_detail(
+                note) for note in request.params.notes]
+            return resp
+        return []
     elif request.action is Action.addNote:
-        return service.add_note(request.params.note)
-    # elif request.action is Action.multi:
-    #    return "TODO"
+        if hasattr(request, 'params') and hasattr(request.params, 'note'):
+            return service.add_note(request.params.note)
+        return None
     elif request.action is Action.storeMediaFile:
         return ""
     elif request.action is Action.version:
         return 2
+    else:
+        logger.warning(f"Unhandled action: {request.action}")
+        return None
+
+
+@app.post("/")
+async def root(
+    request: EmptyRequest | AddNoteRequest | CanAddNotesRequest | CanAddNotesWithErrorDetailRequest | MultiRequest,
+    db: Session = Depends(get_db)
+):
+    api = RenshuuApi(request.key)
+    service = RenshuuService(api, db)
+
+    logger.debug(f'Request action: {request.action}')
+
+    # Handle multi action
+    if request.action is Action.multi:
+        results = []
+        for action_request in request.params.actions:
+            sub_request = action_request.to_request(request.key)
+            result = handle_action(sub_request, service)
+            results.append(result)
+        return results
+
+    # Handle regular single actions
+    return handle_action(request, service)
 
 if __name__ == "__main__":
     if os.name == 'nt':

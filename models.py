@@ -1,11 +1,11 @@
 from enum import Enum
-from pydantic import BaseModel, ConfigDict
-from typing import Literal, Any, Optional
+from pydantic import BaseModel, ConfigDict, TypeAdapter
+from typing import Literal, Any, Optional, Union
 
 
 class CanAddNotesErrorDetail(BaseModel):
     model_config = ConfigDict(exclude_none=True)
-    
+
     canAdd: bool
     error: Optional[str] = None
 
@@ -19,7 +19,7 @@ class Action(str, Enum):
     modelNames = "modelNames"
     modelFieldNames = "modelFieldNames"
     storeMediaFile = "storeMediaFile"
-    # multi = "multi"
+    multi = "multi"
 
 
 class Note(BaseModel):
@@ -83,3 +83,43 @@ class CanAddNotesWithErrorDetailRequest(BaseRequest):
 class StoreMediaFile(BaseRequest):
     action: Literal[Action.storeMediaFile]
     params: Any
+
+
+# Union type for all possible request types (excluding MultiRequest to avoid recursion)
+RequestUnion = Union[
+    EmptyRequest,
+    AddNoteRequest,
+    CanAddNotesRequest,
+    CanAddNotesWithErrorDetailRequest,
+]
+
+# TypeAdapter for automatic validation of union types
+_request_adapter = TypeAdapter(RequestUnion)
+
+
+class MultiActionRequest(BaseModel):
+    action: Action
+    params: Optional[Any] = None
+
+    def to_request(self, key: str) -> RequestUnion:
+        """Construct a "fake request" from a MultiActionRequest."""
+        request_data = {
+            "action": self.action,
+            "version": 2,
+            "key": key
+        }
+        if self.params is not None:
+            request_data["params"] = self.params
+
+        # Use TypeAdapter to automatically validate against the union type
+        # Pydantic will determine which request type matches and validate accordingly
+        return _request_adapter.validate_python(request_data)
+
+
+class MultiParams(BaseModel):
+    actions: list[MultiActionRequest]
+
+
+class MultiRequest(BaseRequest):
+    action: Literal[Action.multi]
+    params: MultiParams
