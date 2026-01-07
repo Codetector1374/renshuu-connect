@@ -1,0 +1,64 @@
+from enum import Enum
+from pydantic import BaseModel
+from typing import Literal, Any
+
+
+class Action(str, Enum):
+    version = "version"
+    addNote = "addNote"
+    canAddNotes = "canAddNotes"
+    deckNames = "deckNames"
+    modelNames = "modelNames"
+    modelFieldNames = "modelFieldNames"
+    storeMediaFile = "storeMediaFile"
+    #multi = "multi"
+
+
+class Note(BaseModel):
+    fields: dict
+    deckName: str
+
+    def japanese(self):
+        return self.fields["Japanese"].split("/")[0]
+
+    def reading(self):
+        japanese = self.fields["Japanese"].split("/")
+        if japanese[-1] != "":
+            return japanese[-1]
+        else:
+            return japanese[0]
+
+    def english(self):
+        return self.fields["English"]
+
+    def jmdict(self):
+        if "jmdictId" in self.fields.keys():
+            return self.fields["jmdictId"]
+        else:
+            return None
+
+class NoteParam(BaseModel):
+    note: Note
+
+class Notes(BaseModel):
+    notes: list[Note]
+
+class BaseRequest(BaseModel):
+    action: Action
+    version: Literal[2]
+    key: str
+
+class EmptyRequest(BaseRequest):
+    action: Literal[Action.version, Action.deckNames, Action.modelNames, Action.modelFieldNames, Action.storeMediaFile]
+
+class AddNoteRequest(BaseRequest):
+    action: Literal[Action.addNote]
+    params: NoteParam
+
+class CanAddNotesRequest(BaseRequest):
+    action: Literal[Action.canAddNotes]
+    params: Notes
+
+class StoreMediaFile(BaseRequest):
+    action: Literal[Action.storeMediaFile]
+    params: Any
