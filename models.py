@@ -19,6 +19,7 @@ class Action(str, Enum):
     modelNames = "modelNames"
     modelFieldNames = "modelFieldNames"
     storeMediaFile = "storeMediaFile"
+    findNotes = "findNotes"
     multi = "multi"
 
 
@@ -80,6 +81,15 @@ class CanAddNotesWithErrorDetailRequest(BaseRequest):
     params: Notes
 
 
+class FindNotesParams(BaseModel):
+    query: str
+
+
+class FindNotesRequest(BaseRequest):
+    action: Literal[Action.findNotes]
+    params: FindNotesParams
+
+
 class StoreMediaFile(BaseRequest):
     action: Literal[Action.storeMediaFile]
     params: Any
@@ -91,6 +101,7 @@ RequestUnion = Union[
     AddNoteRequest,
     CanAddNotesRequest,
     CanAddNotesWithErrorDetailRequest,
+    FindNotesRequest,
 ]
 
 # TypeAdapter for automatic validation of union types

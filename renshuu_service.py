@@ -4,6 +4,7 @@ from db_models import Word, ListMembership
 from sqlalchemy.orm import Session
 from typing import Optional, List
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -333,4 +334,81 @@ class RenshuuService:
         self.db.commit()
         
         return {"deleted_count": count, "list_id": list_id}
+
+    def _parse_find_notes_query(self, query: str) -> dict:
+        """
+        Parse a findNotes query string.
+        Supports Anki-style queries like: "deck:blahblah:blah:blah" "japanese:読む/よむ"
+        Returns a dict with 'list_id' and 'japanese'
+        """
+        result = {"list_id": None, "japanese": None}
+        
+        # Extract quoted strings from the query
+        quoted_strings = re.findall(r'"([^"]*)"', query)
+        
+        for quoted_str in quoted_strings:
+            # Check for deck: prefix
+            if quoted_str.startswith("deck:"):
+                # Extract list_id (first part after deck:)
+                parts = quoted_str.split(":")
+                if len(parts) > 1:
+                    result["list_id"] = parts[1]
+            # Check for japanese: prefix
+            elif quoted_str.startswith("japanese:"):
+                # Extract Japanese text (everything after japanese:)
+                japanese_text = quoted_str[len("japanese:"):]
+                # Handle format like "読む/よむ" - take the part before /
+                if "/" in japanese_text:
+                    result["japanese"] = japanese_text.split("/")[0]
+                else:
+                    result["japanese"] = japanese_text
+        
+        return result
+
+    def find_notes(self, query: str) -> List[int]:
+        """
+        Find notes matching the query.
+        Query format: "deck:list_id:..." "japanese:text"
+        Returns a list of note IDs (renshuu_ids) that match the query.
+        """
+        parsed = self._parse_find_notes_query(query)
+        list_id = parsed.get("list_id")
+        japanese_reading = parsed.get("japanese")
+
+        if '/' in japanese_reading:
+            japanese = japanese_reading.split("/")[0]
+            reading = japanese_reading.split("/")[1]
+        else:
+            japanese = japanese_reading
+            reading = None 
+        
+        if not list_id or not japanese:
+            logger.warning(f"findNotes query missing deck/list_id or japanese: {query}")
+            return []
+        
+        # if not cached, just give up
+        if not self._is_list_cached(list_id):
+            return []
+        
+        # First, query Word table with japanese/reading filters
+        # This is more efficient as it uses indexes on Word table first
+        word_query = self.db.query(Word.renshuu_id).filter(Word.japanese == japanese)
+        if reading:
+            word_query = word_query.filter(Word.reading == reading)
+        
+        # Then check if those words are in the list via ListMembership
+        query_builder = word_query.join(
+            ListMembership,
+            Word.renshuu_id == ListMembership.renshuu_id
+        ).filter(
+            ListMembership.list_id == list_id
+        )
+        
+        # Hopefully there is only one, but we handle it
+        results = query_builder.all()
+        note_ids = [int(row[0]) for row in results if row[0]]
+
+        logger.debug(f"findNotes found {len(note_ids)} notes for query: {query}: {note_ids}")
+        
+        return note_ids
 

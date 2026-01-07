@@ -11,7 +11,7 @@ from typing import Any
 
 from models import (
     Action, EmptyRequest, AddNoteRequest, CanAddNotesRequest,
-    CanAddNotesWithErrorDetailRequest, MultiRequest, BaseRequest
+    CanAddNotesWithErrorDetailRequest, FindNotesRequest, MultiRequest, MultiActionRequest, BaseRequest
 )
 from renshuu_api import RenshuuApi
 from renshuu_service import RenshuuService
@@ -66,6 +66,7 @@ def register_exception(app: FastAPI):
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
         exc_str = f'{exc}'.replace('\n', ' ').replace('   ', ' ')
         logger.warning(f"Validation error: {exc_str}")
+        logger.debug(f"Failing request body: {await request.body()}")
         content = {"result": None, "error": exc_str}
         return JSONResponse(content=content, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -159,6 +160,10 @@ def handle_action(request: BaseRequest, service: RenshuuService) -> Any:
         if hasattr(request, 'params') and hasattr(request.params, 'note'):
             return service.add_note(request.params.note)
         return None
+    elif request.action is Action.findNotes:
+        if hasattr(request, 'params') and hasattr(request.params, 'query'):
+            return service.find_notes(request.params.query)
+        return []
     elif request.action is Action.storeMediaFile:
         return ""
     elif request.action is Action.version:
@@ -170,7 +175,7 @@ def handle_action(request: BaseRequest, service: RenshuuService) -> Any:
 
 @app.post("/")
 async def root(
-    request: EmptyRequest | AddNoteRequest | CanAddNotesRequest | CanAddNotesWithErrorDetailRequest | MultiRequest,
+    request: EmptyRequest | AddNoteRequest | CanAddNotesRequest | CanAddNotesWithErrorDetailRequest | FindNotesRequest | MultiRequest,
     db: Session = Depends(get_db)
 ):
     api = RenshuuApi(request.key)
