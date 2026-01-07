@@ -21,6 +21,7 @@ class Action(str, Enum):
     storeMediaFile = "storeMediaFile"
     findNotes = "findNotes"
     multi = "multi"
+    guiBrowse = "guiBrowse"
 
 
 class Note(BaseModel):
@@ -63,7 +64,7 @@ class BaseRequest(BaseModel):
 
 class EmptyRequest(BaseRequest):
     action: Literal[Action.version, Action.deckNames,
-                    Action.modelNames, Action.modelFieldNames, Action.storeMediaFile]
+                    Action.modelNames, Action.modelFieldNames, Action.storeMediaFile, Action.guiBrowse]
 
 
 class AddNoteRequest(BaseRequest):

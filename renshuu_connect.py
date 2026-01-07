@@ -11,7 +11,7 @@ from typing import Any
 
 from models import (
     Action, EmptyRequest, AddNoteRequest, CanAddNotesRequest,
-    CanAddNotesWithErrorDetailRequest, FindNotesRequest, MultiRequest, MultiActionRequest, BaseRequest
+    CanAddNotesWithErrorDetailRequest, FindNotesRequest, MultiRequest, MultiActionRequest, BaseRequest, RequestUnion
 )
 from renshuu_api import RenshuuApi
 from renshuu_service import RenshuuService
@@ -129,7 +129,7 @@ async def drop_cache(list_id: str, db: Session = Depends(get_db)):
     return result
 
 
-def handle_action(request: BaseRequest, service: RenshuuService) -> Any:
+def handle_action(request: RequestUnion, service: RenshuuService) -> Any:
     """
     Handle a single action request and return the result.
     This function is used both for regular requests and for sub-actions in multi requests.
@@ -145,31 +145,23 @@ def handle_action(request: BaseRequest, service: RenshuuService) -> Any:
     elif request.action is Action.canAddNotes:
         # Note: ProcessPoolExecutor can't share database sessions
         # TODO: We can parallelize the API requests, although in the same thread, API is mostly IO bound
-        if hasattr(request, 'params') and hasattr(request.params, 'notes'):
-            resp = [service.can_add_note(note)
-                    for note in request.params.notes]
-            return resp
-        return []
+        resp = [service.can_add_note(note)
+                for note in request.params.notes]
+        return resp
     elif request.action is Action.canAddNotesWithErrorDetail:
-        if hasattr(request, 'params') and hasattr(request.params, 'notes'):
-            resp = [service.can_add_notes_with_error_detail(
-                note) for note in request.params.notes]
-            return resp
-        return []
+        resp = [service.can_add_notes_with_error_detail(
+            note) for note in request.params.notes]
+        return resp
     elif request.action is Action.addNote:
-        if hasattr(request, 'params') and hasattr(request.params, 'note'):
-            return service.add_note(request.params.note)
-        return None
+        return service.add_note(request.params.note)
     elif request.action is Action.findNotes:
-        if hasattr(request, 'params') and hasattr(request.params, 'query'):
-            return service.find_notes(request.params.query)
-        return []
+        return service.find_notes(request.params.query)
     elif request.action is Action.storeMediaFile:
         return ""
     elif request.action is Action.version:
         return 2
     else:
-        logger.warning(f"Unhandled action: {request.action}")
+        logger.debug(f"Unhandled action: {request.action}")
         return None
 
 
