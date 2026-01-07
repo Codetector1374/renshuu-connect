@@ -5,7 +5,9 @@ from db_models import Base
 import os
 
 # Database file path
-DATABASE_URL = "sqlite:///renshuu_cache.db"
+# Use DATA_DIR environment variable if set, otherwise use current directory
+DATA_DIR = os.getenv("DATA_DIR", ".")
+DATABASE_URL = f"sqlite:///{os.path.join(DATA_DIR, 'renshuu_cache.db')}"
 
 # Create engine with connection pooling for SQLite
 engine = create_engine(

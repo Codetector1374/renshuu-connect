@@ -22,7 +22,8 @@ import os
 
 
 def setup_logging():
-    log_dir = "logs"
+    # Use DATA_DIR environment variable if set, otherwise use current directory
+    log_dir = os.getenv("LOGS_DIR", "logs")
     os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, "renshuu_connect.log")
 
@@ -160,6 +161,8 @@ def handle_action(request: RequestUnion, service: RenshuuService) -> Any:
         return ""
     elif request.action is Action.version:
         return 2
+    elif request.action is Action.guiBrowse:
+        return []
     else:
         logger.debug(f"Unhandled action: {request.action}")
         return None
