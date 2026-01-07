@@ -1,17 +1,25 @@
 from enum import Enum
-from pydantic import BaseModel
-from typing import Literal, Any
+from pydantic import BaseModel, ConfigDict
+from typing import Literal, Any, Optional
+
+
+class CanAddNotesErrorDetail(BaseModel):
+    model_config = ConfigDict(exclude_none=True)
+    
+    canAdd: bool
+    error: Optional[str] = None
 
 
 class Action(str, Enum):
     version = "version"
     addNote = "addNote"
     canAddNotes = "canAddNotes"
+    canAddNotesWithErrorDetail = "canAddNotesWithErrorDetail"
     deckNames = "deckNames"
     modelNames = "modelNames"
     modelFieldNames = "modelFieldNames"
     storeMediaFile = "storeMediaFile"
-    #multi = "multi"
+    # multi = "multi"
 
 
 class Note(BaseModel):
@@ -37,27 +45,40 @@ class Note(BaseModel):
         else:
             return None
 
+
 class NoteParam(BaseModel):
     note: Note
 
+
 class Notes(BaseModel):
     notes: list[Note]
+
 
 class BaseRequest(BaseModel):
     action: Action
     version: Literal[2]
     key: str
 
+
 class EmptyRequest(BaseRequest):
-    action: Literal[Action.version, Action.deckNames, Action.modelNames, Action.modelFieldNames, Action.storeMediaFile]
+    action: Literal[Action.version, Action.deckNames,
+                    Action.modelNames, Action.modelFieldNames, Action.storeMediaFile]
+
 
 class AddNoteRequest(BaseRequest):
     action: Literal[Action.addNote]
     params: NoteParam
 
+
 class CanAddNotesRequest(BaseRequest):
     action: Literal[Action.canAddNotes]
     params: Notes
+
+
+class CanAddNotesWithErrorDetailRequest(BaseRequest):
+    action: Literal[Action.canAddNotesWithErrorDetail]
+    params: Notes
+
 
 class StoreMediaFile(BaseRequest):
     action: Literal[Action.storeMediaFile]

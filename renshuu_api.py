@@ -1,78 +1,77 @@
-from models import Note
 import requests
+from typing import Optional, Dict, Any, List
 
-class RenshuuApi():
-    session: str
+
+class RenshuuApi:
+    """API wrapper for renshuu.org API."""
+    
     baseurl: str = "https://api.renshuu.org/v1/"
     headers: dict
 
     def __init__(self, apikey: str):
-        self.session = apikey
         self.headers = {"Authorization": f"Bearer {apikey}"}
 
-    def japanese(self, term):
-        if term["kanji_full"] == "":
-            return [self.reading(term)]
-        return [t["term"] for t in term["aforms"]] + [term["kanji_full"]]
-
-    def reading(self, term):
-        return term["hiragana_full"]
-
-    def english(self, term):
-        return term.select(".vdict_def_block")[0].get_text().strip()
-
-    def apiError(self, response):
+    def apiError(self, response: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Check if API response contains an error."""
         if "error" in response and response["error"]:
             return {"result": None, "error": response["error"]}
-        else:
-            return None
+        return None
 
-    def schedules(self):
-        response = requests.get(f"{self.baseurl}lists", headers=self.headers).json()
-        if (e := self.apiError(response)): return e
+    def search_words(self, value: str) -> Dict[str, Any]:
+        """
+        Search for words by value.
+        Returns raw API response with list of word objects.
+        """
+        response = requests.get(
+            f"{self.baseurl}word/search?value={value}",
+            headers=self.headers
+        ).json()
+        
+        error = self.apiError(response)
+        if error:
+            return error
+        
+        return response
 
-        # get lists of groups of vocab lists
-        lists = [x for x in response["termtype_groups"] if x["termtype"] == "vocab"][0] or None
-        if not lists: return []
+    def get_lists(self) -> Dict[str, Any]:
+        """
+        Get all lists from the API.
+        Returns raw API response.
+        """
+        response = requests.get(
+            f"{self.baseurl}lists",
+            headers=self.headers
+        ).json()
+        
+        error = self.apiError(response)
+        if error:
+            return error
+        
+        return response
 
-        # list of lists in "it:groupname:title" format
-        lists = [[y["list_id"] + ":" + x["group_title"] + ":" + y["title"] for y in x["lists"]] for x in lists["groups"]]
-        # flatten list
-        lists = [x for xs in lists for x in xs]
-        return lists
+    def add_word_to_list(self, term_id: str, list_id: str) -> requests.Response:
+        """
+        Add a word to a list.
+        Returns the raw requests.Response object.
+        """
+        return requests.put(
+            f"{self.baseurl}word/{term_id}",
+            headers=self.headers,
+            json={"list_id": list_id}
+        )
 
-    def lookup(self, note: Note):
-        response = requests.get(f"{self.baseurl}word/search?value={note.japanese()}", headers = self.headers).json()
-        if (e := self.apiError(response)): return e
-
-        # compare dictionary id first
-        for t in response["words"]:
-            if note.jmdict() == t["edict_ent"]:
-                return t["id"]
-        # compare kanji+reading as fallback
-        for t in response["words"]:
-            if (self.reading(t) == note.reading() and
-                note.japanese() in self.japanese(t)):
-                return t["id"]
-
-    def canAddNote(self, note: Note):
-        return True
-
-    def addNote(self, note: Note):
-        termId = self.lookup(note)
-
-        listId = note.deckName.split(":")[0]
-
-        #if listId not in [x.split(":")[0] for x in self.schedules()]:
-        #    return
-
-        if termId is not None:
-            resp = requests.put(f"{self.baseurl}word/{termId}",
-                               headers = self.headers, json = {"list_id": listId+""})
-            if not resp.ok and resp.json()["error"] != "This term is already present in the schedule.":
-                print(resp.content)
-                content = {"result": None, "error": resp.json()["error"]}
-                return JSONResponse(content=content, status_code=status.HTTP_200_OK)
-            return 1
-        print("no match")
-        #raise HTTPException(status_code = 500, detail = "No matching entry found")
+    def get_list_contents(self, list_id: str, page: int = 1) -> Dict[str, Any]:
+        """
+        Get contents of a list with pagination.
+        Returns raw API response.
+        """
+        response = requests.get(
+            f"{self.baseurl}list/{list_id}?pg={page}",
+            headers=self.headers
+        ).json()
+        
+        error = self.apiError(response)
+        if error:
+            return error
+        
+        return response

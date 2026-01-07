@@ -1,49 +1,89 @@
 #!/bin/env python
 import uvicorn
+import logging
+from logging.handlers import RotatingFileHandler
 
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse
 
-from models import Action, EmptyRequest, AddNoteRequest, CanAddNotesRequest
+from models import Action, EmptyRequest, AddNoteRequest, CanAddNotesRequest, CanAddNotesWithErrorDetailRequest
 from renshuu_api import RenshuuApi
-from concurrent.futures import ProcessPoolExecutor
-from collections import deque
+from renshuu_service import RenshuuService
+from database import init_db, get_db
+from sqlalchemy.orm import Session
+from contextlib import asynccontextmanager
 import os
-import sys
 
-log = deque(maxlen=100)
+
+def setup_logging():
+    log_dir = "logs"
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, "renshuu_connect.log")
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+
+    # Create handlers
+    root_logger.handlers.clear()
+
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+
+    # Console handler - DEBUG level for verbose console output
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.DEBUG)
+    console_handler.setFormatter(formatter)
+    root_logger.addHandler(console_handler)
+
+    file_handler = RotatingFileHandler(
+        log_file,
+        maxBytes=1 * 1024 * 1024,  # 1MB
+        backupCount=5,
+        encoding='utf-8'
+    )
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(formatter)
+    root_logger.addHandler(file_handler)
+
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+
+    return root_logger
+
+
+logger = setup_logging()
+
 
 def register_exception(app: FastAPI):
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
         exc_str = f'{exc}'.replace('\n', ' ').replace('   ', ' ')
-        #print(await request.json())
+        logger.warning(f"Validation error: {exc_str}")
         content = {"result": None, "error": exc_str}
-        return JSONResponse(content=content, status_code=status.HTTP_200_OK)
+        return JSONResponse(content=content, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-class LogOutput(object):
-    def write(self, string):
-        log.append(string)
-        pass
 
-    def isatty(self):
-        return False
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    logger.debug("Initializing database...")
+    init_db()
+    yield
 
-sys.stdout = LogOutput()
-sys.stderr = LogOutput()
 
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
+
 
 async def catch_exceptions_middleware(request: Request, call_next):
     try:
         return await call_next(request)
     except Exception as e:
         exc_str = f"{type(e).__name__} at line {e.__traceback__.tb_lineno} of {__file__}: {e}"
-        print(exc_str)
+        logger.error(exc_str, exc_info=True)
         content = {"result": None, "error": exc_str}
-        return JSONResponse(content=content, status_code=status.HTTP_200_OK)
+        return JSONResponse(content=content, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 app.middleware('http')(catch_exceptions_middleware)
 
@@ -57,36 +97,60 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.get("/", response_class=PlainTextResponse)
-async def root(showlog: str="0"):
-    if showlog == "0":
-        return ""
-    msg = "Last 100 log messages:\n\n"
-    msg += "".join(log)
-    return msg
+async def root():
+    return ""
+
 
 @app.get("/about", response_class=PlainTextResponse)
-async def root(showlog: str = "0"):
+async def about():
     pid = os.getpid()
     return f"renshuu-connect is running!\nPID = {pid}"
 
+
+@app.delete("/drop_cache/{list_id}")
+async def drop_cache(list_id: str, db: Session = Depends(get_db)):
+    """
+    Drop the cache for a specific list.
+    Deletes all ListMembership records with the given list_id.
+    """
+
+    from renshuu_api import RenshuuApi
+    api = RenshuuApi("")
+    service = RenshuuService(api, db)
+
+    result = service.drop_list_cache(list_id)
+    return result
+
+
 @app.post("/")
-async def root(request: EmptyRequest | AddNoteRequest | CanAddNotesRequest):
+async def root(
+    request: EmptyRequest | AddNoteRequest | CanAddNotesRequest | CanAddNotesWithErrorDetailRequest,
+    db: Session = Depends(get_db)
+):
     api = RenshuuApi(request.key)
+    service = RenshuuService(api, db)
+
+    logger.debug(f'Request action: {request.action}')
 
     if request.action is Action.deckNames:
-        return api.schedules()
+        return service.get_schedules()
     elif request.action is Action.modelNames:
         return ["Default", "with jmdictId"]
     elif request.action is Action.modelFieldNames:
         return ["Japanese", "English", "jmdictId"]
     elif request.action is Action.canAddNotes:
-        with ProcessPoolExecutor() as executor:
-            resp = executor.map(api.canAddNote, request.params.notes)
-        return list(resp)
+        # Note: ProcessPoolExecutor can't share database sessions
+        # TODO: We can parallelize the API requests, although in the same thread, API is mostly IO bound
+        resp = [service.can_add_note(note) for note in request.params.notes],
+        return resp
+    elif request.action is Action.canAddNotesWithErrorDetail:
+        resp = [service.can_add_notes_with_error_detail(note) for note in request.params.notes]
+        return resp
     elif request.action is Action.addNote:
-        return api.addNote(request.params.note)
-    #elif request.action is Action.multi:
+        return service.add_note(request.params.note)
+    # elif request.action is Action.multi:
     #    return "TODO"
     elif request.action is Action.storeMediaFile:
         return ""
@@ -97,4 +161,5 @@ if __name__ == "__main__":
     if os.name == 'nt':
         import windows
         windows.setup_tray_icon()
-    uvicorn.run(app, port=8765, log_level="warning")
+    logger.info("Starting renshuu-connect server on port 8765")
+    uvicorn.run(app, port=8765, log_config=None)
