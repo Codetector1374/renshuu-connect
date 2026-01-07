@@ -1,0 +1,11 @@
+services:
+  renshuu-connect:
+    build: .
+    container_name: renshuu-connect
+    ports:
+      - "8765:8765"
+    volumes:
+      - ./data:/data
+      - ./logs:/logs
+    restart: unless-stopped
+
